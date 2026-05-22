@@ -1,77 +1,205 @@
-﻿# templ-quickstart
+# dwCloud
 
-## Introduction
+dwCloud is a lightweight alternative to the Nextcloud server, with support for Nextcloud and WebDAV clients.
 
-Do not rely on this for anything important yet, it is still in development. The DB schema isn't finalized yet,
-and there will be breaking changes. 1.0 will be released when the DB schema is finalized, and migrations will be
-provided from then on for any future updates.
+This project is still in development. Do not rely on it for anything important yet: the database schema is not finalized, and there will be breaking changes before 1.0.
 
-Automatic database backup will not be provided, but you can use the provided docker-compose.yml to run a postgres
-container and back up the postgres database and the `STORAGE_DIR`. The initial idea was to use xattr to store database
-metadata as a backup solution and to only require backup of the `STORAGE_DIR`, but this was abandoned in favor of a 
-more traditional backup solution due to the performance impact.
+Automatic database backup is not provided. Back up the Postgres database and `STORAGE_DIR`. The initial idea was to use extended attributes as a metadata backup solution and only require backup of `STORAGE_DIR`, but that was abandoned because of the performance impact.
 
-Lightweight alternative to the nextcloud server, compatible with nextcloud and webdav clients.
-This is a work in progress, but the most basic functionality is working.
+## Getting Started With Docker Compose
 
-## AI Usage
-This project has used a combination of Claude Code and Codex AI to generate most of the HTMX templates.
+The provided `docker-compose.yaml` starts:
 
-## Environment Variables
+- `db`: Postgres
+- `dwcloud`: dwCloud, built from the GitHub repository
 
-You can have multiple identity providers, you must have env variables for each IDP with IDP_VAR_1 ... IDP_VAR_N. <br>
+The compose file builds dwCloud from:
 
-Make sure that you do not place the UPLOAD_DIR and STORAGE_DIR in the same directory, or UPLOAD_DIR inside STORAGE_DIR.
+```yaml
+https://github.com/dulanw/dwCloud.git#${DWCLOUD_GIT_REF:-main}
+```
+
+If you change `Containerfile`, `.dockerignore`, or app code locally, commit and push those changes to the branch referenced by `DWCLOUD_GIT_REF` before relying on the remote GitHub build context.
+
+Create a `.env` file next to `docker-compose.yaml`:
 
 ```env
 PROTOCOL=http
 DOMAIN=localhost:8080
-LISTEN_ADDRESS=:8080
+
+POSTGRES_PASSWORD=change-this
+POSTGRES_DB=postgres
+
+SESSION_KEY=change-this-to-a-long-random-string
+SESSION_DURATION=4h
 
 IDP_CLIENT_ID_1=
 IDP_SECRET_1=
-IDP_ENDPOINT_1=
-IDP_SCOPES_1="openid,email,profile,groups"
+IDP_ENDPOINT_1=https://auth.example.com
+IDP_SCOPES_1=openid,email,profile,groups
 IDP_ID_1=pocketid
 IDP_NAME_1=Pocket ID
-IDP_LOGO_1=./logo/pocketid.svg
-
-SESSION_KEY=random-string-here
-SESSION_DURATION=4h
-STORAGE_DIR=./storage
-UPLOAD_DIR=./uploads
-
-POSTGRES_ADDRESS=localhost:50159
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=random-string-here
-POSTGRES_DB=postgres
+IDP_LOGO_FILE_1=pocketid.svg
 ```
+
+Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+Open:
+
+```text
+http://localhost:8080
+```
+
+For a real deployment, put dwCloud behind HTTPS reverse-proxy (caddy) and set:
+
+```env
+PROTOCOL=https
+DOMAIN=cloud.example.com
+```
+
+OIDC callback URLs are generated as:
+
+```text
+{PROTOCOL}://{DOMAIN}/auth/callback/{IDP_ID_N}
+```
+
+For the default Pocket ID config, register this callback URL in Pocket ID:
+
+```text
+http://localhost:8080/auth/callback/pocketid
+```
+
+or, for production:
+
+```text
+https://cloud.example.com/auth/callback/pocketid
+```
+
+## Identity Provider Setup
+
+dwCloud uses OpenID Connect for browser login. You need at least one OIDC identity provider configured.
+
+Pocket ID is a good default for self-hosting because it is a simple OIDC provider built around passkeys:
+
+- Pocket ID repo: https://github.com/pocket-id/pocket-id
+- Pocket ID installation docs: https://pocket-id.org/docs/setup/installation/
+
+After Pocket ID is running:
+
+1. Sign in to Pocket ID.
+2. Create an OIDC client for dwCloud.
+3. Add the callback URL shown above.
+4. Copy the client ID into `IDP_CLIENT_ID_1`.
+5. Copy the client secret into `IDP_SECRET_1`.
+6. Set `IDP_ENDPOINT_1` to your Pocket ID base URL, for example `https://auth.example.com`.
+
+Other OIDC providers can also be used, such as Google, Keycloak, Authentik, Authelia, Zitadel, Auth0, or Azure Entra ID. GitHub's normal sign-in integration is OAuth2 rather than a drop-in OIDC issuer for this app, so use an OIDC broker/provider if you want GitHub-backed login.
+
+## Environment Variables
+
+You can configure multiple identity providers by repeating the indexed IDP variables:
+
+```text
+IDP_CLIENT_ID_1, IDP_SECRET_1, ...
+IDP_CLIENT_ID_2, IDP_SECRET_2, ...
+```
+
+Stop at the first missing `IDP_CLIENT_ID_N`; later providers will not be read.
+
+### App
+
+| Variable | Required | Example | Description |
+|---|---:|---|---|
+| `PROTOCOL` | yes | `https` | Public protocol used to build absolute URLs and OIDC callback URLs. |
+| `DOMAIN` | yes | `cloud.example.com` | Public host, optionally with port. Do not include `http://` or `https://`. |
+| `LISTEN_ADDRESS` | yes | `:8080` | Address the Go server listens on inside the container. The compose file sets this to `:8080`. |
+| `SESSION_KEY` | yes | long random string | Secret used to sign session cookies. Use a high-entropy value and keep it stable across restarts. |
+| `SESSION_DURATION` | no | `4h` | Session lifetime. Defaults to `4h` if omitted. |
+| `STORAGE_DIR` | yes | `/data/storage` | User file storage path. In Docker this is backed by `./storage`. |
+| `UPLOAD_DIR` | yes | `/data/uploads` | Temporary upload/chunk path. Do not put this inside `STORAGE_DIR`. |
+
+### Postgres
+
+| Variable | Required | Example | Description |
+|---|---:|---|---|
+| `POSTGRES_ADDRESS` | yes | `db:5432` | Host and port for Postgres. The compose file sets this for the app. |
+| `POSTGRES_USER` | yes | `postgres` | Database user. |
+| `POSTGRES_PASSWORD` | yes | `change-this` | Database password. |
+| `POSTGRES_DB` | yes | `postgres` | Database name. |
+
+### Identity Providers
+
+| Variable | Required | Example | Description |
+|---|---:|---|---|
+| `IDP_CLIENT_ID_N` | yes | `abc123` | OIDC client ID from the provider. |
+| `IDP_SECRET_N` | yes | `secret` | OIDC client secret from the provider. |
+| `IDP_ENDPOINT_N` | yes | `https://auth.example.com` | OIDC issuer/base URL. The app discovers provider metadata from this URL. |
+| `IDP_SCOPES_N` | yes | `openid,email,profile,groups` | Comma-separated OIDC scopes. `openid` is added automatically if missing. |
+| `IDP_ID_N` | yes | `pocketid` | Stable provider ID used in routes, including `/auth/callback/{IDP_ID_N}`. |
+| `IDP_NAME_N` | yes | `Pocket ID` | Display name shown on the login button. |
+| `IDP_LOGO_N` | yes | `/app/static/logo/pocketid.svg` | Filesystem path to an SVG logo. The compose file derives this from `IDP_LOGO_FILE_N`. |
+| `IDP_LOGO_FILE_N` | compose-only | `pocketid.svg` | Convenience variable for selecting a file under `/app/static/logo/`. |
 
 ## Development Setup
 
+### GoLand
+
+For local development in GoLand, install the EnvFile plugin, add .env file in the project dir, under Run/Debug 
+Configuration → EnvFile, add `Type=.env` `Path=.env`.
+
+Set the Go tool arguments/build tags to:
+
+```text
+-tags=DEBUG
+```
+
+The `DEBUG` tag enables the debug-only WebDAV code in `handlers/webdav_debug.go`.
+
 ### Templ HTML Generation
 
-With templ installed and the binary somewhere on your PATH, run the following to generate your HTML components and templates (remove --watch to simply build and not hot reload)
+With `templ` installed and available on your `PATH`, run:
 
 ```bash
 templ generate --watch
 ```
 
+Remove `--watch` to generate once.
+
 ### CSS File Generation
 
-With the [Tailwind Binary](https://tailwindcss.com/blog/standalone-cli) installed and moved somewhere on your PATH, run the following to generate your CSS output for your tailwind classes (remove --watch to simply build and not hot reload)
+With the Tailwind standalone binary installed and available on your `PATH`, run:
 
 ```bash
 tailwindcss -i ./static/css/input.css -o ./static/css/styles.css --watch
 ```
 
-### Litmus Test
+Remove `--watch` to build once.
 
-Install litmus in wsl `sudo apt update && sudo apt install litmus` and run the command
-`litmus <server>/remote.php/dav/files/dwettasinghe1682/ <username> <password>`
+## Litmus Test
 
-make sure to create an app password in the webui and use that password.
+Install litmus in WSL:
 
 ```bash
-litmus http://192.168.50.115:8080/remote.php/dav/files/dwettasinghe1682/ dwettasinghe6799 98588918749879fb1aedbbc99b60da6a5815d7496a2e63cc427cc301535a1b183b59eb8f
+sudo apt update
+sudo apt install litmus
 ```
+
+Create an app password in the dwCloud web UI and use that password for litmus:
+
+```bash
+litmus http://localhost:8080/remote.php/dav/files/<username>/ <username> <app-password>
+```
+
+Example:
+
+```bash
+litmus http://192.168.50.115:8080/remote.php/dav/files/dwettasinghe1682/ dwettasinghe6799 <app-password-generated-in-ui>
+```
+
+## AI Usage
+
+This project has used a combination of Claude Code and Codex AI to generate most of the HTMX templates.
