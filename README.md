@@ -17,7 +17,7 @@ This is a work in progress, but the most basic functionality is working.
 ## AI Usage
 This project has used a combination of Claude Code and Codex AI to generate most of the HTMX templates.
 
-### Environment Variables
+## Environment Variables
 
 You can have multiple identity providers, you must have env variables for each IDP with IDP_VAR_1 ... IDP_VAR_N. <br>
 
