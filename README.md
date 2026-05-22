@@ -54,6 +54,8 @@ Open:
 http://localhost:8080
 ```
 
+After the app starts, the first user who signs in becomes the admin user. Create and sign in with the intended admin account first.
+
 For a real deployment, put dwCloud behind HTTPS reverse-proxy (caddy) and set:
 
 ```env
