@@ -1,0 +1,12 @@
+.git
+.idea
+.env
+
+tmp
+uploads
+storage
+test-data
+db-data
+
+*.log
+*.tmp

@@ -1,0 +1,58 @@
+services:
+  db:
+    container_name: postgres
+    image: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "50159:5432"
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  dwcloud:
+    container_name: dwcloud
+    build:
+      context: https://github.com/dulanw/dwCloud.git#${DWCLOUD_GIT_REF:-main}
+      dockerfile: Containerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PROTOCOL: ${PROTOCOL:-http}
+      DOMAIN: ${DOMAIN:-localhost:8080}
+      LISTEN_ADDRESS: :8080
+
+      IDP_CLIENT_ID_1: ${IDP_CLIENT_ID_1:?set IDP_CLIENT_ID_1}
+      IDP_SECRET_1: ${IDP_SECRET_1:?set IDP_SECRET_1}
+      IDP_ENDPOINT_1: ${IDP_ENDPOINT_1:?set IDP_ENDPOINT_1}
+      IDP_SCOPES_1: ${IDP_SCOPES_1:-openid,email,profile,groups}
+      IDP_ID_1: ${IDP_ID_1:-pocketid}
+      IDP_NAME_1: ${IDP_NAME_1:-Pocket ID}
+      IDP_LOGO_1: /app/static/logo/${IDP_LOGO_FILE_1:-pocketid.svg}
+
+      SESSION_KEY: ${SESSION_KEY:?set SESSION_KEY}
+      SESSION_DURATION: ${SESSION_DURATION:-4h}
+      STORAGE_DIR: /data/storage
+      UPLOAD_DIR: /data/uploads
+
+      POSTGRES_ADDRESS: db:5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./storage:/data/storage
+      - ./uploads:/data/uploads
+    restart: unless-stopped
+
+volumes:
+  db:
