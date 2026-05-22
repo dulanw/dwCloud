@@ -1,0 +1,272 @@
+package template
+
+import (
+	"dwCloud/types"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+)
+
+func nullableString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func userDisplayName(user types.DbUser) string {
+	if user.DisplayName != nil && strings.TrimSpace(*user.DisplayName) != "" {
+		return strings.TrimSpace(*user.DisplayName)
+	}
+	if user.Email != nil && strings.TrimSpace(*user.Email) != "" {
+		return strings.TrimSpace(*user.Email)
+	}
+	return user.ID.String()
+}
+
+func userPanelID(view types.AdminUserView) string {
+	return "user-panel-" + view.User.ID.String()
+}
+
+func userFormID(view types.AdminUserView) string {
+	return "user-form-" + view.User.ID.String()
+}
+
+func formatBytes(bytes int64) string {
+	if bytes == 0 {
+		return "0B"
+	}
+
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := math.Abs(float64(bytes))
+	unitIndex := 0
+	for value >= 1024 && unitIndex < len(units)-1 {
+		value = value / 1024
+		unitIndex++
+	}
+
+	if bytes < 0 {
+		value = -value
+	}
+	if math.Abs(value-math.Round(value)) < 0.05 {
+		return fmt.Sprintf("%.0f%s", value, units[unitIndex])
+	}
+	if value >= 100 {
+		return fmt.Sprintf("%.0f%s", value, units[unitIndex])
+	}
+	if value >= 10 {
+		return fmt.Sprintf("%.1f%s", value, units[unitIndex])
+	}
+	return fmt.Sprintf("%.2f%s", value, units[unitIndex])
+}
+
+func quotaEditUnit(bytes int64) string {
+	units := []struct {
+		name       string
+		multiplier int64
+	}{
+		{"TB", 1024 * 1024 * 1024 * 1024},
+		{"GB", 1024 * 1024 * 1024},
+		{"MB", 1024 * 1024},
+		{"KB", 1024},
+		{"B", 1},
+	}
+	for _, unit := range units {
+		if bytes >= unit.multiplier && bytes%unit.multiplier == 0 {
+			return unit.name
+		}
+	}
+	for _, unit := range units {
+		if bytes >= unit.multiplier {
+			return unit.name
+		}
+	}
+	return "B"
+}
+
+func quotaEditValue(bytes int64) string {
+	unit := quotaEditUnit(bytes)
+	multiplier := int64(1)
+	switch unit {
+	case "TB":
+		multiplier = 1024 * 1024 * 1024 * 1024
+	case "GB":
+		multiplier = 1024 * 1024 * 1024
+	case "MB":
+		multiplier = 1024 * 1024
+	case "KB":
+		multiplier = 1024
+	}
+
+	value := float64(bytes) / float64(multiplier)
+	if math.Abs(value-math.Round(value)) < 0.0001 {
+		return fmt.Sprintf("%.0f", value)
+	}
+	return strconv.FormatFloat(value, 'f', 2, 64)
+}
+
+templ AdminUsersPage(users []types.AdminUserView, csrfToken string) {
+	<main>
+		<div class="p-4 bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700">
+			<div class="mb-4">
+				<nav class="flex mb-5" aria-label="Breadcrumb">
+					<ol class="inline-flex items-center space-x-1 text-sm font-medium md:space-x-2">
+						<li class="inline-flex items-center">
+							<a href="/dashboard" class="inline-flex items-center text-gray-700 hover:text-primary-600 dark:text-gray-300 dark:hover:text-white">Home</a>
+						</li>
+						<li>
+							<div class="flex items-center">
+								<span class="mx-2 text-gray-400">/</span>
+								<span class="text-gray-700 dark:text-gray-300">Settings</span>
+							</div>
+						</li>
+						<li>
+							<div class="flex items-center">
+								<span class="mx-2 text-gray-400">/</span>
+								<span class="text-gray-400 dark:text-gray-500" aria-current="page">Admin Users</span>
+							</div>
+						</li>
+					</ol>
+				</nav>
+				<h1 class="text-xl font-semibold text-gray-900 sm:text-2xl dark:text-white">Admin users</h1>
+				<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Select a user to edit account fields, quota, storage, and metadata.</p>
+			</div>
+		</div>
+		<div class="p-4 space-y-2">
+			if len(users) == 0 {
+				<div class="p-4 text-sm text-gray-500 bg-white border border-gray-200 rounded-lg dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400">No users found.</div>
+			}
+			for _, user := range users {
+				@AdminUserDisclosure(user, "", false, csrfToken)
+			}
+		</div>
+	</main>
+}
+
+templ AdminUserDisclosure(view types.AdminUserView, message string, open bool, csrfToken string) {
+	if open {
+		<details id={ userPanelID(view) } open class="group bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-800 dark:border-gray-700">
+			@AdminUserSummary(view)
+			@AdminUserExpanded(view, message, csrfToken)
+		</details>
+	} else {
+		<details id={ userPanelID(view) } class="group bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-800 dark:border-gray-700">
+			@AdminUserSummary(view)
+			@AdminUserExpanded(view, message, csrfToken)
+		</details>
+	}
+}
+
+templ AdminUserSummary(view types.AdminUserView) {
+	<summary class="flex cursor-pointer list-none items-center justify-between gap-3 p-4 hover:bg-gray-50 dark:hover:bg-gray-700">
+		<div class="min-w-0">
+			<div class="text-sm font-semibold text-gray-900 truncate sm:text-base dark:text-white">{ userDisplayName(view.User) }</div>
+			<div class="mt-1 text-sm text-gray-500 truncate dark:text-gray-400">{ nullableString(view.User.Email) }</div>
+		</div>
+		<div class="flex shrink-0 items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+			<span class="hidden sm:inline">{ view.User.Role }</span>
+			<span class="hidden md:inline">Usage { formatBytes(view.UsageBytes) }</span>
+			<svg class="h-5 w-5 transition-transform group-open:rotate-180" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+				<path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"></path>
+			</svg>
+		</div>
+	</summary>
+}
+
+templ AdminUserExpanded(view types.AdminUserView, message string, csrfToken string) {
+	<div class="border-t border-gray-200 p-4 dark:border-gray-700">
+		<form
+			id={ userFormID(view) }
+			hx-post={ "/settings/admin/users/" + view.User.ID.String() }
+			hx-target={ "#" + userPanelID(view) }
+			hx-swap="outerHTML"
+			class="space-y-5"
+		>
+			<input type="hidden" name="csrf_token" value={ csrfToken }/>
+			<div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+				<div>
+					<label class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Display name</label>
+					<input autocomplete="off" type="text" name="display_name" value={ nullableString(view.User.DisplayName) } class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+				</div>
+				<div>
+					<label class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Email</label>
+					<input autocomplete="off" type="email" name="email" value={ nullableString(view.User.Email) } class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+				</div>
+				<div>
+					<label class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Storage dir</label>
+					<input autocomplete="off" type="text" name="storage_dir" value={ view.User.StorageDir } class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+				</div>
+				<div>
+					<label class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Quota</label>
+					@AdminQuotaControls(view)
+				</div>
+			</div>
+			<div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+				@AdminStat("Usage", formatBytes(view.UsageBytes))
+				@AdminStat("Quota", formatBytes(view.User.QuotaBytes))
+				@AdminStat("Verified", strconv.FormatBool(view.User.EmailVerified))
+				@AdminStat("Last Login", view.User.LastLoginAt.Format("2006-01-02 15:04"))
+			</div>
+			@AdminUserMetadata(view)
+			<div class="flex items-center gap-3">
+				<button type="submit" class="text-white bg-primary-700 hover:bg-primary-800 focus:ring-4 focus:ring-primary-300 font-medium rounded-lg text-sm px-4 py-2.5 dark:bg-primary-600 dark:hover:bg-primary-700 focus:outline-none dark:focus:ring-primary-800">Save</button>
+				if message != "" {
+					<span class="text-xs text-gray-500 dark:text-gray-400">{ message }</span>
+				}
+			</div>
+		</form>
+	</div>
+}
+
+templ AdminStat(label string, value string) {
+	<div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900">
+		<div class="text-xs font-medium uppercase text-gray-500 dark:text-gray-400">{ label }</div>
+		<div class="mt-1 text-sm font-semibold text-gray-900 break-words dark:text-white">{ value }</div>
+	</div>
+}
+
+templ AdminQuotaControls(view types.AdminUserView) {
+	<div class="flex gap-2">
+		<input autocomplete="off" type="number" min="0" step="0.01" name="quota_value" value={ quotaEditValue(view.User.QuotaBytes) } class="min-w-0 flex-1 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 block p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+		<select name="quota_unit" class="w-24 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+			@QuotaUnitOption("B", quotaEditUnit(view.User.QuotaBytes))
+			@QuotaUnitOption("KB", quotaEditUnit(view.User.QuotaBytes))
+			@QuotaUnitOption("MB", quotaEditUnit(view.User.QuotaBytes))
+			@QuotaUnitOption("GB", quotaEditUnit(view.User.QuotaBytes))
+			@QuotaUnitOption("TB", quotaEditUnit(view.User.QuotaBytes))
+		</select>
+	</div>
+}
+
+templ QuotaUnitOption(value string, selected string) {
+	if value == selected {
+		<option value={ value } selected>{ value }</option>
+	} else {
+		<option value={ value }>{ value }</option>
+	}
+}
+
+templ AdminUserMetadata(view types.AdminUserView) {
+	<section>
+		<h2 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Metadata</h2>
+		<dl class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+			@AdminMetaItem("ID", view.User.ID.String())
+			@AdminMetaItem("Username", view.User.Username)
+			@AdminMetaItem("Provider", view.User.Provider)
+			@AdminMetaItem("Subject", view.User.Subject)
+			@AdminMetaItem("Avatar URL", nullableString(view.User.AvatarURL))
+			@AdminMetaItem("Timezone", view.User.Timezone)
+			@AdminMetaItem("Language", view.User.Language)
+			@AdminMetaItem("Locale", nullableString(view.User.Locale))
+			@AdminMetaItem("Created", view.User.CreatedAt.Format("2006-01-02 15:04"))
+		</dl>
+	</section>
+}
+
+templ AdminMetaItem(label string, value string) {
+	<div class="min-w-0 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900">
+		<dt class="text-xs font-medium uppercase text-gray-500 dark:text-gray-400">{ label }</dt>
+		<dd class="mt-1 text-sm text-gray-900 break-words dark:text-white">{ value }</dd>
+	</div>
+}

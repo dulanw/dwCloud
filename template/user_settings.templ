@@ -1,0 +1,291 @@
+package template
+
+import (
+	"dwCloud/types"
+	"time"
+)
+
+func formatTime(value time.Time) string {
+	if value.IsZero() {
+		return "Never"
+	}
+	return value.Format("2006-01-02 15:04")
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil {
+		return "Never"
+	}
+	return formatTime(*value)
+}
+
+func appPasswordDeleteAfter(value types.DbAppPassword) string {
+	if value.RevokedAt == nil {
+		return ""
+	}
+	return value.RevokedAt.Add(7 * 24 * time.Hour).Format("2006-01-02 15:04")
+}
+
+func appPasswordStatus(value types.DbAppPassword) string {
+	if value.RemoteWipeCompletedAt != nil {
+		return "Wiped"
+	}
+	if value.RemoteWipeAt != nil {
+		return "Wipe pending"
+	}
+	if value.RevokedAt != nil {
+		return "Revoked"
+	}
+	return "Active"
+}
+
+func appPasswordPanelID(value types.DbAppPassword) string {
+	return "app-password-" + value.ID.String()
+}
+
+templ UserSettingsTabs(active string) {
+	<nav class="mt-4 flex flex-wrap gap-2 text-sm" aria-label="User settings">
+		@UserSettingsTab("/settings/user", "Personal info", active == "profile")
+		@UserSettingsTab("/settings/user/security", "Security", active == "security")
+	</nav>
+}
+
+templ UserSettingsTab(href string, label string, active bool) {
+	if active {
+		<a href={ href } class="rounded-lg bg-primary-700 px-3 py-2 font-medium text-white">{ label }</a>
+	} else {
+		<a
+			href={ href }
+			hx-get={ href + "?partial=true" }
+			hx-target="main"
+			hx-swap="outerHTML"
+			hx-push-url={ href }
+			class="rounded-lg border border-gray-200 bg-white px-3 py-2 font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+		>{ label }</a>
+	}
+}
+
+templ UserSettingsPage(user types.DbUser, message string, isError bool, csrfToken string) {
+	<main>
+		<section class="border-b border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+			<div class="mx-auto max-w-7xl">
+				<p class="text-sm font-medium text-primary-700 dark:text-primary-300">Settings</p>
+				<h1 class="mt-2 text-2xl font-semibold text-gray-900 sm:text-3xl dark:text-white">Personal info</h1>
+				<p class="mt-2 max-w-3xl text-sm text-gray-500 dark:text-gray-400">These details are used by the web UI and returned to compatible clients through the account APIs.</p>
+				@UserSettingsTabs("profile")
+			</div>
+		</section>
+		<div class="mx-auto max-w-7xl p-4">
+			@UserProfilePanel(user, message, isError, csrfToken)
+		</div>
+	</main>
+}
+
+templ UserProfilePanel(user types.DbUser, message string, isError bool, csrfToken string) {
+	<section id="user-profile-panel" class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-6">
+		<form
+			hx-post="/settings/user"
+			hx-target="#user-profile-panel"
+			hx-swap="outerHTML"
+			class="space-y-6"
+		>
+			<input type="hidden" name="csrf_token" value={ csrfToken }/>
+			<div class="grid gap-4 md:grid-cols-2">
+				@ProfileInput("Display name", "display_name", "text", nullableString(user.DisplayName), "Your name")
+				@ProfileInput("Email", "email", "email", nullableString(user.Email), "you@example.com")
+				@ProfileInput("Timezone", "timezone", "text", user.Timezone, "Europe/London")
+				@ProfileInput("Language", "language", "text", user.Language, "en_GB")
+				@ProfileInput("Locale", "locale", "text", nullableString(user.Locale), "en_GB")
+				@ProfileInput("Avatar URL", "avatar_url", "url", nullableString(user.AvatarURL), "https://...")
+			</div>
+			<div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+				@AdminStat("Username", user.Username)
+				@AdminStat("Provider", user.Provider)
+				@AdminStat("Email verified", boolText(user.EmailVerified))
+				@AdminStat("Created", formatTime(user.CreatedAt))
+			</div>
+			<div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+				<button type="submit" class="inline-flex justify-center rounded-lg bg-primary-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-800 focus:outline-none focus:ring-4 focus:ring-primary-300 dark:bg-primary-600 dark:hover:bg-primary-700 dark:focus:ring-primary-800">Save changes</button>
+				if message != "" {
+					<span class={ settingsMessageClass(isError) }>{ message }</span>
+				}
+			</div>
+		</form>
+	</section>
+}
+
+func boolText(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
+func settingsMessageClass(isError bool) string {
+	if isError {
+		return "text-sm font-medium text-red-600 dark:text-red-400"
+	}
+	return "text-sm font-medium text-green-600 dark:text-green-400"
+}
+
+templ ProfileInput(label string, name string, inputType string, value string, placeholder string) {
+	<div>
+		<label class="mb-2 block text-sm font-medium text-gray-900 dark:text-white">{ label }</label>
+		<input
+			autocomplete="off"
+			type={ inputType }
+			name={ name }
+			value={ value }
+			placeholder={ placeholder }
+			class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400"
+		/>
+	</div>
+}
+
+templ UserSecurityPage(user types.DbUser, passwords []types.DbAppPassword, generatedUsername string, generatedPassword string, message string, isError bool, csrfToken string) {
+	<main>
+		<section class="border-b border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+			<div class="mx-auto max-w-7xl">
+				<p class="text-sm font-medium text-primary-700 dark:text-primary-300">Settings</p>
+				<h1 class="mt-2 text-2xl font-semibold text-gray-900 sm:text-3xl dark:text-white">Security</h1>
+				<p class="mt-2 max-w-3xl text-sm text-gray-500 dark:text-gray-400">App passwords let desktop and mobile clients connect without storing your browser session.</p>
+				@UserSettingsTabs("security")
+			</div>
+		</section>
+		<div class="mx-auto max-w-7xl p-4">
+			@UserSecurityContent(user.Username, passwords, generatedUsername, generatedPassword, message, isError, csrfToken)
+		</div>
+	</main>
+}
+
+templ UserSecurityContent(loginName string, passwords []types.DbAppPassword, generatedUsername string, generatedPassword string, message string, isError bool, csrfToken string) {
+	<section id="security-content" class="space-y-4">
+		if generatedPassword != "" {
+			<div class="rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-950">
+				<h2 class="text-sm font-semibold text-green-900 dark:text-green-100">New app password</h2>
+				<p class="mt-1 text-sm text-green-800 dark:text-green-200">Copy this now. It is shown once and only the hash is stored.</p>
+				<div class="mt-3 grid gap-3 md:grid-cols-2">
+					@ReadonlySecret("Login name", generatedUsername)
+					@ReadonlySecret("App password", generatedPassword)
+				</div>
+			</div>
+		}
+		if message != "" {
+			<div class={ securityBannerClass(isError) }>{ message }</div>
+		}
+		<div class="space-y-4">
+			<section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-6">
+				<div class="max-w-2xl">
+					<h2 class="text-lg font-semibold text-gray-900 dark:text-white">Create app password</h2>
+					<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Use a label that identifies the device or client.</p>
+				</div>
+				<form
+					hx-post="/settings/user/security/app-passwords"
+					hx-target="#security-content"
+					hx-swap="outerHTML"
+					class="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end"
+				>
+					<input type="hidden" name="csrf_token" value={ csrfToken }/>
+					<div>
+						<label class="mb-2 block text-sm font-medium text-gray-900 dark:text-white">Label</label>
+						<input autocomplete="off" required minlength="2" maxlength="120" type="text" name="label" placeholder="Windows laptop" class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-primary-500 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400"/>
+					</div>
+					<button type="submit" class="inline-flex w-full justify-center rounded-lg bg-primary-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-800 focus:outline-none focus:ring-4 focus:ring-primary-300 md:w-auto dark:bg-primary-600 dark:hover:bg-primary-700 dark:focus:ring-primary-800">Generate password</button>
+				</form>
+			</section>
+			<section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-6">
+				<div class="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+					<div>
+						<h2 class="text-lg font-semibold text-gray-900 dark:text-white">Existing app passwords</h2>
+						<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Revoked passwords stop working immediately and are purged after 7 days. Remote wipe also revokes the password and stays pending until the client confirms completion.</p>
+					</div>
+					<span class="text-sm text-gray-500 dark:text-gray-400">{ len(passwords) } total</span>
+				</div>
+				<div class="mt-4 space-y-3">
+					if len(passwords) == 0 {
+						<div class="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">No app passwords yet.</div>
+					}
+					for _, password := range passwords {
+						@AppPasswordRow(password, loginName, csrfToken)
+					}
+				</div>
+			</section>
+		</div>
+	</section>
+}
+
+func securityBannerClass(isError bool) string {
+	if isError {
+		return "rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+	}
+	return "rounded-lg border border-green-200 bg-green-50 p-3 text-sm font-medium text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-200"
+}
+
+templ ReadonlySecret(label string, value string) {
+	<div>
+		<label class="mb-2 block text-xs font-medium uppercase tracking-wide text-green-900 dark:text-green-100">{ label }</label>
+		<input readonly value={ value } class="block w-full rounded-lg border border-green-300 bg-white p-2.5 font-mono text-sm text-gray-900 dark:border-green-800 dark:bg-gray-900 dark:text-white"/>
+	</div>
+}
+
+templ AppPasswordRow(password types.DbAppPassword, loginName string, csrfToken string) {
+	<div id={ appPasswordPanelID(password) } class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+		<div class="min-w-0">
+			<div class="flex flex-wrap items-center gap-2">
+				<h3 class="truncate text-sm font-semibold text-gray-900 dark:text-white">{ password.Label }</h3>
+				@AppPasswordStatusBadge(password)
+			</div>
+			<dl class="mt-2 grid gap-2 text-xs text-gray-500 sm:grid-cols-2 xl:grid-cols-4 dark:text-gray-400">
+				<div><dt class="font-medium text-gray-700 dark:text-gray-300">Login name</dt><dd class="break-all font-mono">{ loginName }</dd></div>
+				<div><dt class="font-medium text-gray-700 dark:text-gray-300">Created</dt><dd>{ formatTime(password.CreatedAt) }</dd></div>
+				<div><dt class="font-medium text-gray-700 dark:text-gray-300">Last used</dt><dd>{ formatOptionalTime(password.LastUsedAt) }</dd></div>
+				if password.RemoteWipeAt != nil {
+					<div><dt class="font-medium text-gray-700 dark:text-gray-300">Wipe requested</dt><dd>{ formatOptionalTime(password.RemoteWipeAt) }</dd></div>
+				}
+				if password.RemoteWipeCompletedAt != nil {
+					<div><dt class="font-medium text-gray-700 dark:text-gray-300">Wipe completed</dt><dd>{ formatOptionalTime(password.RemoteWipeCompletedAt) }</dd></div>
+				}
+				if password.RevokedAt != nil {
+					<div><dt class="font-medium text-gray-700 dark:text-gray-300">Purge after</dt><dd>{ appPasswordDeleteAfter(password) }</dd></div>
+				}
+			</dl>
+		</div>
+		if password.RevokedAt == nil || password.RemoteWipeAt == nil {
+			<div class="mt-4 flex flex-col gap-2 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end dark:border-gray-700">
+				if password.RevokedAt == nil {
+					<form
+						hx-post={ "/settings/user/security/app-passwords/" + password.ID.String() + "/revoke" }
+						hx-target="#security-content"
+						hx-swap="outerHTML"
+					>
+						<input type="hidden" name="csrf_token" value={ csrfToken }/>
+						<button type="submit" class="inline-flex w-full justify-center rounded-lg border border-red-600 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-600 hover:text-white focus:outline-none focus:ring-4 focus:ring-red-300 sm:w-auto dark:border-red-500 dark:text-red-400 dark:hover:bg-red-600 dark:hover:text-white dark:focus:ring-red-900">Revoke</button>
+					</form>
+				}
+				if password.RemoteWipeAt == nil {
+					<form
+						hx-post={ "/settings/user/security/app-passwords/" + password.ID.String() + "/wipe" }
+						hx-target="#security-content"
+						hx-swap="outerHTML"
+						hx-confirm="Remote wipe this device? The app password will be revoked immediately."
+					>
+						<input type="hidden" name="csrf_token" value={ csrfToken }/>
+						<button type="submit" class="inline-flex w-full justify-center rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-red-300 sm:w-auto dark:bg-red-700 dark:hover:bg-red-800 dark:focus:ring-red-900">Remote wipe</button>
+					</form>
+				}
+			</div>
+		}
+	</div>
+}
+
+templ AppPasswordStatusBadge(password types.DbAppPassword) {
+	if password.RemoteWipeCompletedAt != nil {
+		<span class="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900 dark:text-red-100">{ appPasswordStatus(password) }</span>
+	} else if password.RemoteWipeAt != nil {
+		<span class="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100">{ appPasswordStatus(password) }</span>
+	} else if password.RevokedAt == nil {
+		<span class="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200">{ appPasswordStatus(password) }</span>
+	} else {
+		<span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200">{ appPasswordStatus(password) }</span>
+	}
+}

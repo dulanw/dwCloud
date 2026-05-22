@@ -1,0 +1,103 @@
+package template
+
+import (
+	cloudapp "dwCloud/app"
+	"strconv"
+)
+
+func previewMessage(status cloudapp.PreviewStatus) string {
+	if status.Running {
+		return "Generating thumbnails"
+	}
+	if status.Queued > 0 {
+		return "Thumbnail generation queued"
+	}
+	if status.LastError != "" {
+		return "Thumbnail generation paused"
+	}
+	return "Thumbnail generation idle"
+}
+
+templ AdminOperationsPage(previewStatus cloudapp.PreviewStatus) {
+	<main>
+		<div class="p-4 bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700">
+			<div class="mb-4">
+				<nav class="flex mb-5" aria-label="Breadcrumb">
+					<ol class="inline-flex items-center space-x-1 text-sm font-medium md:space-x-2">
+						<li class="inline-flex items-center">
+							<a href="/dashboard" class="inline-flex items-center text-gray-700 hover:text-primary-600 dark:text-gray-300 dark:hover:text-white">Home</a>
+						</li>
+						<li>
+							<div class="flex items-center">
+								<span class="mx-2 text-gray-400">/</span>
+								<span class="text-gray-700 dark:text-gray-300">Settings</span>
+							</div>
+						</li>
+						<li>
+							<div class="flex items-center">
+								<span class="mx-2 text-gray-400">/</span>
+								<span class="text-gray-700 dark:text-gray-300">Admin</span>
+							</div>
+						</li>
+						<li>
+							<div class="flex items-center">
+								<span class="mx-2 text-gray-400">/</span>
+								<span class="text-gray-400 dark:text-gray-500" aria-current="page">Operations</span>
+							</div>
+						</li>
+					</ol>
+				</nav>
+				<h1 class="text-xl font-semibold text-gray-900 sm:text-2xl dark:text-white">Admin operations</h1>
+				<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Monitor background thumbnail generation.</p>
+			</div>
+		</div>
+		<div class="p-4">
+			@AdminOperationsStatus(previewStatus)
+		</div>
+	</main>
+}
+
+templ AdminOperationsStatus(previewStatus cloudapp.PreviewStatus) {
+	if previewStatus.Running || previewStatus.Queued > 0 {
+		<div id="admin-operations-status" class="grid gap-4 lg:grid-cols-2" hx-get="/settings/admin/general/status" hx-trigger="every 1s" hx-swap="outerHTML">
+			@AdminPreviewPanel(previewStatus)
+		</div>
+	} else {
+		<div id="admin-operations-status" class="grid gap-4 lg:grid-cols-2">
+			@AdminPreviewPanel(previewStatus)
+		</div>
+	}
+}
+
+templ AdminPreviewPanel(status cloudapp.PreviewStatus) {
+	<section class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+		<div>
+			<h2 class="text-base font-semibold text-gray-900 dark:text-white">Thumbnails</h2>
+			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{ previewMessage(status) }</p>
+		</div>
+		<div class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+			@StatusMetric("Queued", strconv.Itoa(status.Queued))
+			@StatusMetric("Processed", strconv.Itoa(status.Processed))
+			@StatusMetric("Generated", strconv.Itoa(status.Generated))
+			@StatusMetric("Skipped", strconv.Itoa(status.Skipped))
+		</div>
+		if status.Failed > 0 || status.LastError != "" {
+			<div class="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+				<span>Failures { strconv.Itoa(status.Failed) }</span>
+				if status.LastError != "" {
+					<span class="ml-2">{ status.LastError }</span>
+				}
+			</div>
+		}
+		if status.Current != "" {
+			<p class="mt-3 truncate text-xs text-gray-500 dark:text-gray-400">{ status.Current }</p>
+		}
+	</section>
+}
+
+templ StatusMetric(label string, value string) {
+	<div>
+		<div class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{ label }</div>
+		<div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{ value }</div>
+	</div>
+}

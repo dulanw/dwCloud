@@ -1,0 +1,21 @@
+package component
+
+import "html/template"
+
+templ SSOIcon(icon template.HTML) {
+	@templ.Raw(icon)
+}
+
+templ SSOButton(title string, href string, svg templ.Component) {
+	<a
+		href={ href }
+		class="w-full max-w-[calc(100vw-3rem)] sm:max-w-none px-4 py-3 sm:px-6 font-bold shadow-sm rounded-lg bg-indigo-100 text-gray-800 flex items-center justify-center gap-3 transition-all duration-300 ease-in-out focus:outline-none hover:shadow focus:shadow-sm focus:shadow-outline"
+	>
+		<div class="bg-white p-1 rounded-full w-8 h-8 flex items-center justify-center shrink-0">
+			@svg
+		</div>
+		<span class="text-sm sm:text-base text-center leading-snug break-words">
+			Sign in with { title }
+		</span>
+	</a>
+}

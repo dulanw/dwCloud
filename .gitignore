@@ -1,0 +1,14 @@
+﻿component/component_templ.go
+template/template_templ.go
+template/login_templ.go
+.idea
+static/css/styles.css
+.env
+tmp
+component/sidebar_templ.go
+component/navbar_templ.go
+template/dashboard_templ.go
+template/admin_users_templ.go
+template/admin_operations_templ.go
+template/user_settings_templ.go
+test-data

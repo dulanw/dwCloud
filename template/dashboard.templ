@@ -1,0 +1,104 @@
+package template
+
+import (
+	"dwCloud/types"
+)
+
+templ stylesheet() {
+	<link rel="preconnect" href="https://fonts.googleapis.com"/>
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+	<link rel="stylesheet" href="/static/css/styles.css"/>
+}
+
+templ header(title string) {
+	<meta charset="utf-8"/>
+	<meta name="viewport" content="width=device-width, initial-scale=1"/>
+	<meta name="description" content="Lightweight Nextcloud-compatible file server"/>
+	<title>{ title } - dwCloud</title>
+	@stylesheet()
+	<link rel="apple-touch-icon" sizes="180x180" href="/static/images/apple-touch-icon.png"/>
+	<link rel="icon" type="image/png" sizes="32x32" href="/static/images/favicon-32x32.png"/>
+	<link rel="icon" type="image/png" sizes="16x16" href="/static/images/favicon-16x16.png"/>
+	<link rel="icon" type="image/png" href="/static/images/favicon.ico"/>
+	<link rel="manifest" href="/static/site.webmanifest"/>
+	<meta name="theme-color" content="#ffffff"/>
+	<script src="/static/js/htmx.min.js"></script>
+	<script src="/static/js/header.js"></script>
+}
+
+templ footer() {
+	<footer class="mx-4 my-6 rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-500 md:flex md:items-center md:justify-between dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+		<span>dwCloud</span>
+		<span class="mt-2 block md:mt-0">Nextcloud-compatible sync, without the ballast.</span>
+	</footer>
+}
+
+templ LayoutSidebar(title string, navbar templ.Component, sidebar templ.Component, content templ.Component) {
+	<!doctype html>
+	<html lang="en" class="dark">
+		<head>
+			@header(title)
+		</head>
+		<body hx-boost="true" class="bg-gray-50 dark:bg-gray-900">
+			@navbar
+			<div class="flex pt-16">
+				@sidebar
+				<div id="main-content" class="relative min-h-[calc(100vh-4rem)] w-full overflow-y-auto bg-gray-50 lg:ml-64 dark:bg-gray-900">
+					@content
+					@footer()
+				</div>
+			</div>
+		</body>
+	</html>
+}
+
+templ DashboardPage(user types.DbUser, isAdmin bool) {
+	<main>
+		<section class="border-b border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+			<div class="mx-auto max-w-7xl">
+				<p class="text-sm font-medium text-primary-700 dark:text-primary-300">Dashboard</p>
+				<h1 class="mt-2 text-2xl font-semibold text-gray-900 sm:text-3xl dark:text-white">Welcome, { userDisplayName(user) }</h1>
+				<p class="mt-2 max-w-3xl text-sm text-gray-500 dark:text-gray-400">Manage your account details, app passwords, and sync access from one place.</p>
+			</div>
+		</section>
+		<section class="mx-auto grid max-w-7xl gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+			@DashboardCard("/settings/user", "Personal info", "Keep your name, email, timezone, language, locale, and avatar URL current.", "Edit profile")
+			@DashboardCard("/settings/user/security", "Security", "Create app passwords for clients and revoke old device credentials.", "Manage app passwords")
+			if isAdmin {
+				@DashboardCard("/settings/admin/general", "Admin operations", "Monitor thumbnail generation progress.", "View operations")
+				@DashboardCard("/settings/admin/users", "Admin users", "Review users, quota, storage directories, and provider metadata.", "Manage users")
+			}
+		</section>
+		<section class="mx-auto max-w-7xl p-4">
+			<div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+				@DashboardStat("Username", user.Username)
+				@DashboardStat("Role", user.Role)
+				@DashboardStat("Email", nullableString(user.Email))
+				@DashboardStat("Timezone", user.Timezone)
+			</div>
+		</section>
+	</main>
+}
+
+templ DashboardCard(href string, title string, description string, action string) {
+	<a
+		href={ href }
+		hx-get={ href + "?partial=true" }
+		hx-target="main"
+		hx-swap="outerHTML"
+		hx-push-url={ href }
+		class="block rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition hover:border-primary-300 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-primary-600"
+	>
+		<h2 class="text-lg font-semibold text-gray-900 dark:text-white">{ title }</h2>
+		<p class="mt-2 min-h-12 text-sm text-gray-500 dark:text-gray-400">{ description }</p>
+		<span class="mt-4 inline-flex items-center text-sm font-medium text-primary-700 dark:text-primary-300">{ action }</span>
+	</a>
+}
+
+templ DashboardStat(label string, value string) {
+	<div class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+		<div class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{ label }</div>
+		<div class="mt-2 truncate text-sm font-semibold text-gray-900 dark:text-white">{ value }</div>
+	</div>
+}
