@@ -20,7 +20,7 @@ type State struct {
 	Previews *PreviewService
 }
 
-func (s *State) Init(cfg *Config) error {
+func (s *State) Init(ctx context.Context, cfg *Config) error {
 	dsn := cfg.GetDSN()
 
 	sqlxDb, err := sqlx.Open("pgx", dsn)
@@ -33,7 +33,6 @@ func (s *State) Init(cfg *Config) error {
 	bunDb := bun.NewDB(sqlDb, pgdialect.New())
 
 	migrator := migrate.NewMigrator(bunDb, migrations.Migrations)
-	ctx := context.Background()
 
 	if err := migrator.Init(ctx); err != nil {
 		return fmt.Errorf("failed to initialise migrations: %w", err)

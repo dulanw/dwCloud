@@ -75,7 +75,7 @@ func optionalDuration(value string, defaultValue time.Duration) (time.Duration, 
 	return duration, nil
 }
 
-func (cfg *Config) Load() error {
+func (cfg *Config) Load(ctx context.Context) error {
 	cfg.Protocol = os.Getenv("PROTOCOL")
 	if cfg.Protocol == "" {
 		return fmt.Errorf("missing PROTOCOL")
@@ -148,7 +148,7 @@ func (cfg *Config) Load() error {
 			continue
 		}
 
-		provider, err := oidc.NewProvider(context.Background(), endpoint)
+		provider, err := oidc.NewProvider(ctx, endpoint)
 		if err != nil {
 			return fmt.Errorf("failed to initialise provider %s: %w", id, err)
 		}

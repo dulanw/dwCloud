@@ -5,9 +5,12 @@ import (
 	"dwCloud/app"
 	"dwCloud/handlers"
 	"embed"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/a-h/templ"
@@ -34,13 +37,21 @@ func Render(ctx *echo.Context, statusCode int, t templ.Component) error {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	a := new(app.App)
-	err := a.Init()
+	err := a.Init(ctx)
 
 	if err != nil {
 		slog.Error("Failed to init app", "error", err)
 		os.Exit(1)
 	}
+	defer func() {
+		if err := a.State.Db.Close(); err != nil {
+			slog.Warn("failed to close database", "error", err)
+		}
+	}()
 
 	h := handlers.NewHandler(a)
 
@@ -177,10 +188,21 @@ func main() {
 	//basicAuth.Add("PROPFIND", "/remote.php/dav/files/:username", h.WebDAVFilesRootPropfindHandler)
 
 	// Start background cleanup of expired flows
-	go runLoginFlowJanitor(context.Background(), a.State.Db, 1*time.Second)
+	go runLoginFlowJanitor(ctx, a.State.Db, 1*time.Second)
 
-	if err := e.Start(a.Cfg.ListenAddr); err != nil {
+	sc := echo.StartConfig{
+		Address:         a.Cfg.ListenAddr,
+		GracefulTimeout: 30 * time.Second,
+		OnShutdownError: func(err error) {
+			slog.Error("failed to shut down server gracefully", "error", err)
+		},
+	}
+	if err := sc.Start(ctx, e); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		e.Logger.Error("failed to start server", "error", err)
+		os.Exit(1)
+	}
+	if ctx.Err() != nil {
+		slog.Info("server shut down")
 	}
 }
 

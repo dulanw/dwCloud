@@ -52,6 +52,7 @@ services:
     volumes:
       - ./storage:/data/storage
       - ./uploads:/data/uploads
+    stop_grace_period: 45s
     restart: unless-stopped
 
 volumes:
