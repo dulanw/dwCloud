@@ -221,4 +221,4 @@ litmus http://192.168.50.115:8080/remote.php/dav/files/dwettasinghe1682/ dwettas
 
 ## AI Usage
 
-This project has used a combination of Claude Code and Codex AI to generate most of the HTMX templates.
+This project has used a combination of Claude Code and Codex AI to generate most of the HTMX templates, the file preview service was implemented completely by codex & claude code, and claude code was used to review the project.
