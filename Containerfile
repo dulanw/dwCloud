@@ -7,7 +7,7 @@ FROM golang:${GO_VERSION}-alpine AS build
 
 ARG TAILWIND_VERSION
 
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates git libstdc++ wget
 
 WORKDIR /src
 COPY . .
@@ -20,6 +20,7 @@ RUN wget -qO /usr/local/bin/tailwindcss \
     && tailwindcss -i ./static/css/input.css -o ./static/css/styles.css --minify
 
 RUN go mod download
+# Build templ-generated Go files from .templ sources before compiling the app.
 RUN go run github.com/a-h/templ/cmd/templ@v0.3.977 generate
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/dwcloud .
 
