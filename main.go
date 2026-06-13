@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
-	"github.com/a-h/templ"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo-contrib/session"
@@ -23,18 +23,6 @@ import (
 
 //go:embed static/*
 var staticFS embed.FS
-
-// This custom Render replaces Echo's echo.Context.Render() with templ's templ.Component.Render().
-func Render(ctx *echo.Context, statusCode int, t templ.Component) error {
-	buf := templ.GetBuffer()
-	defer templ.ReleaseBuffer(buf)
-
-	if err := t.Render(ctx.Request().Context(), buf); err != nil {
-		return err
-	}
-
-	return ctx.HTML(statusCode, buf.String())
-}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -87,9 +75,11 @@ func main() {
 	//	}
 	//})
 
-	// serve static
-	e.Static("/static", "static")
-	e.File("/favicon.ico", "static/images/favicon.ico")
+	// serve static assets from the embedded filesystem so the binary is
+	// self-contained and does not depend on the working directory.
+	staticSub := echo.MustSubFS(staticFS, "static")
+	e.StaticFS("/static", staticSub)
+	e.FileFS("/favicon.ico", "images/favicon.ico", staticSub)
 
 	// error handling
 	e.HTTPErrorHandler = h.ErrorHandler
@@ -187,8 +177,12 @@ func main() {
 
 	//basicAuth.Add("PROPFIND", "/remote.php/dav/files/:username", h.WebDAVFilesRootPropfindHandler)
 
-	// Start background cleanup of expired flows
-	go runLoginFlowJanitor(ctx, a.State.Db, 1*time.Second)
+	// Start background cleanup of expired login flows, stale locks, revoked app
+	// passwords, and abandoned chunk-upload sessions.
+	go runJanitor(ctx, a.State.Db, a.Cfg.UploadDir, time.Minute)
+
+	// Periodically evict expired entries from the Basic-auth credential cache.
+	go h.StartCredentialCacheJanitor(ctx, time.Minute)
 
 	sc := echo.StartConfig{
 		Address:         a.Cfg.ListenAddr,
@@ -206,7 +200,9 @@ func main() {
 	}
 }
 
-func runLoginFlowJanitor(ctx context.Context, db *sqlx.DB, every time.Duration) {
+func runJanitor(ctx context.Context, db *sqlx.DB, uploadDir string, every time.Duration) {
+	const staleUploadAge = 24 * time.Hour
+
 	t := time.NewTicker(every)
 	defer t.Stop()
 
@@ -224,6 +220,41 @@ func runLoginFlowJanitor(ctx context.Context, db *sqlx.DB, every time.Duration) 
 			_, _ = db.ExecContext(ctx, `
 				DELETE FROM app_passwords WHERE revoked_at <= NOW() - INTERVAL '7 days'
 			`)
+			cleanStaleUploads(uploadDir, staleUploadAge)
+		}
+	}
+}
+
+// cleanStaleUploads removes chunk-upload session directories that have not been
+// touched within maxAge. Clients that start a chunked upload but never finish the
+// final MOVE would otherwise leak directories under UPLOAD_DIR forever. The layout
+// is UPLOAD_DIR/<user storage dir>/<transfer id>/.
+func cleanStaleUploads(uploadDir string, maxAge time.Duration) {
+	userDirs, err := os.ReadDir(uploadDir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, userDir := range userDirs {
+		if !userDir.IsDir() {
+			continue
+		}
+		userPath := filepath.Join(uploadDir, userDir.Name())
+		sessions, err := os.ReadDir(userPath)
+		if err != nil {
+			continue
+		}
+		for _, sessionDir := range sessions {
+			if !sessionDir.IsDir() {
+				continue
+			}
+			info, err := sessionDir.Info()
+			if err != nil {
+				continue
+			}
+			if info.ModTime().Before(cutoff) {
+				_ = os.RemoveAll(filepath.Join(userPath, sessionDir.Name()))
+			}
 		}
 	}
 }

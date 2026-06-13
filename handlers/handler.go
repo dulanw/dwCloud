@@ -16,11 +16,15 @@ import (
 )
 
 type Handler struct {
-	app *app.App
+	app       *app.App
+	credCache *credentialCache
 }
 
 func NewHandler(a *app.App) *Handler {
-	return &Handler{app: a}
+	return &Handler{
+		app:       a,
+		credCache: newCredentialCache(credentialCacheTTL, credentialCacheMaxEntries),
+	}
 }
 
 // This custom Render replaces Echo's echo.Context.Render() with templ's templ.Component.Render().
@@ -42,23 +46,31 @@ func (h *Handler) ErrorHandler(c *echo.Context, err error) {
 		}
 	}
 
-	// /ocs/v2.php/cloud/... and /ocs/v2.php/cloud/capabilities
 	req := c.Request()
 	path := req.URL.Path
 
+	code := http.StatusInternalServerError
+	msg := http.StatusText(http.StatusInternalServerError)
+
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		code = he.Code
+		if strings.TrimSpace(he.Message) != "" {
+			msg = he.Message
+		}
+	}
+
+	// Never expose internal error details (database errors, filesystem paths,
+	// upstream OIDC errors, ...) to clients. Log them server-side and return a
+	// generic status text for 5xx responses.
+	if code >= http.StatusInternalServerError {
+		slog.Error("request failed", "method", req.Method, "path", path, "status", code, "error", err)
+		msg = http.StatusText(code)
+	}
+
+	// /ocs/v2.php/cloud/... and /ocs/v2.php/cloud/capabilities
 	isOCS := strings.HasPrefix(path, "/ocs/") || strings.TrimSpace(req.Header.Get("OCS-APIRequest")) != ""
 	if isOCS {
-		code := http.StatusInternalServerError
-		msg := "Internal Server Error"
-
-		var he *echo.HTTPError
-		if errors.As(err, &he) {
-			code = he.Code
-			if strings.TrimSpace(he.Message) != "" {
-				msg = he.Message
-			}
-		}
-
 		ocsMsg := msg
 		if code == http.StatusUnauthorized || code == http.StatusForbidden {
 			ocsMsg = "Current user is not logged in"
@@ -92,17 +104,8 @@ func (h *Handler) ErrorHandler(c *echo.Context, err error) {
 	}
 
 	// HTML error page
-	code := http.StatusInternalServerError
-	msg := "Internal Server Error"
-
-	var he *echo.HTTPError
-	if errors.As(err, &he) {
-		code = he.Code
-		msg = he.Message // safely cast to string
-	}
-
 	var cErr error
-	if c.Request().Method == http.MethodHead {
+	if req.Method == http.MethodHead {
 		cErr = c.NoContent(code)
 	} else {
 		html := mytemplate.HTML("Error", mytemplate.Box(mytemplate.Error(code, http.StatusText(code), msg)))

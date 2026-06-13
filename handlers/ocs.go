@@ -4,9 +4,7 @@ import (
 	"dwCloud/types"
 	"dwCloud/utils"
 	"fmt"
-	"io/fs"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -122,28 +120,6 @@ func (h *Handler) OCSCapabilitiesHandler(c *echo.Context) error {
 	return utils.PrettyJSON(c, http.StatusOK, types.NewOCSJSON(types.OKMeta(100), data))
 }
 
-// #TODO filepath.WalkDir how slow is this? better to increment value on db on add/update/delete?
-func dirUsedBytes(root string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		// Use Info() -> Size() (metadata). This may follow symlinks depending on OS/filesystem.
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		total += info.Size()
-		return nil
-	})
-	return total, err
-}
-
 func (h *Handler) OCSUserHandler(c *echo.Context) error {
 	//curl -H "OCS-APIRequest: true" PROTOCOL://DOMAIN//ocs/v1.php/cloud/user?format=json
 
@@ -176,14 +152,11 @@ func (h *Handler) OCSUserHandler(c *echo.Context) error {
 	// storage location
 	storagePath := filepath.ToSlash(filepath.Join(h.app.Cfg.StorageDir, user.StorageDir))
 	quotaTotal := user.QuotaBytes
-	used, sizeErr := dirUsedBytes(storagePath)
+	// Use the DB-maintained root size instead of walking the whole storage tree on
+	// every request: clients poll this endpoint frequently.
+	used, sizeErr := h.userUsageBytes(c, user.ID)
 	if sizeErr != nil {
-		// If the directory doesn't exist yet, treat it as empty instead of failing the whole request.
-		if os.IsNotExist(sizeErr) {
-			used = 0
-		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, sizeErr.Error())
-		}
+		return echo.NewHTTPError(http.StatusInternalServerError, sizeErr.Error())
 	}
 	free := quotaTotal - used
 	if free < 0 {

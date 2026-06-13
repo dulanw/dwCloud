@@ -138,6 +138,48 @@ func TestDAVTaggedListAppliesToDepthInfinityParentLock(t *testing.T) {
 	}
 }
 
+func TestDAVChildHref(t *testing.T) {
+	tests := []struct {
+		name      string
+		selfHref  string
+		relCanon  string
+		childPath string
+		isDir     bool
+		want      string
+	}{
+		{
+			name:      "root direct child file",
+			selfHref:  "/remote.php/dav/files/admin/",
+			relCanon:  "",
+			childPath: "report final.txt",
+			isDir:     false,
+			want:      "/remote.php/dav/files/admin/report%20final.txt",
+		},
+		{
+			name:      "root direct child dir",
+			selfHref:  "/remote.php/dav/files/admin/",
+			relCanon:  "",
+			childPath: "Photos",
+			isDir:     true,
+			want:      "/remote.php/dav/files/admin/Photos/",
+		},
+		{
+			name:      "nested descendant for depth infinity",
+			selfHref:  "/remote.php/dav/files/admin/Photos/",
+			relCanon:  "Photos",
+			childPath: "Photos/2026/trip pics/img 1.jpg",
+			isDir:     false,
+			want:      "/remote.php/dav/files/admin/Photos/2026/trip%20pics/img%201.jpg",
+		},
+	}
+
+	for _, tt := range tests {
+		if got := davChildHref(tt.selfHref, tt.relCanon, tt.childPath, tt.isDir); got != tt.want {
+			t.Fatalf("%s: davChildHref() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestDAVContentType(t *testing.T) {
 	if got := davContentType(&types.DbFile{Path: "Pictures", IsDir: true}); got != "httpd/unix-directory" {
 		t.Fatalf("directory content type = %q, want httpd/unix-directory", got)

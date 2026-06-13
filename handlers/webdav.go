@@ -296,6 +296,53 @@ func getFileChildren(ctx context.Context, db *sqlx.DB, userID uuid.UUID, relCano
 	return rows, nil
 }
 
+// getFileDescendants returns every entry below relCanon (the whole subtree),
+// used to satisfy a Depth: infinity PROPFIND.
+func getFileDescendants(ctx context.Context, db *sqlx.DB, userID uuid.UUID, relCanon string) ([]types.DbFile, error) {
+	var rows []types.DbFile
+	var err error
+	if relCanon == "" {
+		err = db.SelectContext(ctx, &rows, `
+			SELECT *
+			FROM files
+			WHERE user_id = $1
+			  AND path != ''
+			ORDER BY path
+		`, userID)
+	} else {
+		err = db.SelectContext(ctx, &rows, `
+			SELECT *
+			FROM files
+			WHERE user_id = $1
+			  AND LEFT(path, length($2) + 1) = $2 || '/'
+			ORDER BY path
+		`, userID, relCanon)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// davChildHref builds the percent-encoded href for a descendant of the collection
+// whose own href is selfHref (which always ends in "/"). relCanon is the collection's
+// canonical path; childPath is the descendant's canonical path.
+func davChildHref(selfHref, relCanon, childPath string, isDir bool) string {
+	rel := childPath
+	if relCanon != "" {
+		rel = strings.TrimPrefix(childPath, relCanon+"/")
+	}
+	segments := strings.Split(rel, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	href := selfHref + strings.Join(segments, "/")
+	if isDir {
+		href += "/"
+	}
+	return href
+}
+
 func getFileChildCounts(ctx context.Context, db *sqlx.DB, userID uuid.UUID, relCanon string) (int, int, error) {
 	type childCounts struct {
 		Folders int `db:"folders"`
@@ -1290,19 +1337,19 @@ func (w *WebDAV) handleDAVPropfind(c *echo.Context) error {
 	responses = append(responses, addResponseFor(selfHref, selfEntry))
 
 	if selfEntry.IsDir && listChildren {
-		children, err := getFileChildren(ctx, w.db, w.user.ID, relCanon)
+		var children []types.DbFile
+		if strings.EqualFold(depth, "infinity") {
+			children, err = getFileDescendants(ctx, w.db, w.user.ID, relCanon)
+		} else {
+			children, err = getFileChildren(ctx, w.db, w.user.ID, relCanon)
+		}
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 		}
 
 		for i := range children {
 			child := &children[i]
-			name := path.Base(child.Path)
-			childHref := selfHref + url.PathEscape(name)
-			if child.IsDir {
-				childHref += "/"
-			}
-			responses = append(responses, addResponseFor(childHref, child))
+			responses = append(responses, addResponseFor(davChildHref(selfHref, relCanon, child.Path, child.IsDir), child))
 		}
 	}
 

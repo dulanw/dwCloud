@@ -1038,6 +1038,18 @@ func (h *Handler) getAppPasswordFromBasicAuth(c *echo.Context) (*string, *types.
 		return nil, nil, err
 	}
 
+	// Fast path: a short-TTL cache of validated credentials lets repeated
+	// identical Basic-auth requests (sync clients send hundreds) skip the
+	// deliberately slow bcrypt comparison. Only successful validations are
+	// cached, so wrong passwords still fall through to bcrypt below. The
+	// caller (BasicAuthMiddleware) loads the user fresh from ap.UserID, so a
+	// minimally populated app password is enough here.
+	cacheKey := credCacheKey(username, password)
+	if entry, ok := h.credCache.get(cacheKey); ok {
+		ap := types.DbAppPassword{ID: entry.appPasswordID, UserID: entry.userID}
+		return &username, &ap, nil
+	}
+
 	var user types.DbUser
 	if err := h.app.State.Db.GetContext(c.Request().Context(), &user, `
 		SELECT * FROM users WHERE username = $1 LIMIT 1
@@ -1057,9 +1069,12 @@ func (h *Handler) getAppPasswordFromBasicAuth(c *echo.Context) (*string, *types.
 
 	for _, ap := range appPasswords {
 		if err := bcrypt.CompareHashAndPassword([]byte(ap.SecretHash), []byte(password)); err == nil {
+			// last_used_at is refreshed here (on the bcrypt path) only; cache
+			// hits skip it, which throttles the write to ~once per TTL window.
 			_, _ = h.app.State.Db.ExecContext(c.Request().Context(), `
 				UPDATE app_passwords SET last_used_at = NOW() WHERE id = $1
 			`, ap.ID)
+			h.credCache.put(cacheKey, ap.ID, user.ID)
 			return &username, &ap, nil
 		}
 	}

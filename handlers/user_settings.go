@@ -241,6 +241,10 @@ func (h *Handler) AppPasswordRevokeHandler(c *echo.Context) error {
 		return h.renderSecurityContent(c, *user, "", "", "App password was already revoked or not found.", true)
 	}
 
+	// Drop any cached validation so the revoked credential stops working now,
+	// not just after the cache TTL elapses.
+	h.credCache.invalidateAppPassword(passwordID)
+
 	return h.renderSecurityContent(c, *user, "", "", "App password revoked. It will be deleted after 7 days.", false)
 }
 
@@ -273,6 +277,10 @@ func (h *Handler) AppPasswordRemoteWipeHandler(c *echo.Context) error {
 	if affected == 0 {
 		return h.renderSecurityContent(c, *user, "", "", "Remote wipe was already requested or the app password was not found.", true)
 	}
+
+	// Drop any cached validation so the wiped credential stops working now,
+	// not just after the cache TTL elapses.
+	h.credCache.invalidateAppPassword(passwordID)
 
 	return h.renderSecurityContent(c, *user, "", "", "Remote wipe requested. The app password has been revoked.", false)
 }
