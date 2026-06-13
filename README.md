@@ -6,6 +6,13 @@ This project is still in development. Do not rely on it for anything important y
 
 Automatic database backup is not provided. Back up the Postgres database and `STORAGE_DIR`. The initial idea was to use extended attributes as a metadata backup solution and only require backup of `STORAGE_DIR`, but that was abandoned because of the performance impact.
 
+## Tailscale and Caddy
+
+It's probably a bad idea to expose to the WAN, so secure it behind tailscale/netbird.
+
+The easiest way to get this setup is with caddy and tailscale, setup caddy and reverse proxy cloud.example.com to `dwcloud:8080`, <br>
+Then setup your dns to point cloud.example.com to your servers tailscale IP. You can setup the Idp however you want and just set the callback url to be https://cloud.example.com/auth/callback/{IDP_ID_N}
+
 ## Getting Started With Docker Compose
 
 The provided `docker-compose.yaml` starts:
@@ -26,6 +33,7 @@ Create a `.env` file next to `docker-compose.yaml`:
 ```env
 PROTOCOL=http
 DOMAIN=localhost:8080
+LISTEN_ADDRESS:8080
 
 POSTGRES_PASSWORD=change-this
 POSTGRES_DB=postgres
@@ -79,6 +87,15 @@ or, for production:
 
 ```text
 https://cloud.example.com/auth/callback/pocketid
+```
+
+### Windows (WSL2)
+
+Fix permission issue when you mount vhdx or windows directory to be used for uploads/storage.
+
+```
+chown -R 100:101 /mnt/host/wsl/vol1-vhdx/nextcloud/uploads /mnt/host/wsl/vol1-vhdx/nextcloud/storage
+chmod -R u+rwX,g+rwX /mnt/host/wsl/vol1-vhdx/nextcloud/uploads /mnt/host/wsl/vol1-vhdx/nextcloud/storage
 ```
 
 ## Identity Provider Setup

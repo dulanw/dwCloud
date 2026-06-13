@@ -28,7 +28,7 @@ services:
     environment:
       PROTOCOL: ${PROTOCOL:-http}
       DOMAIN: ${DOMAIN:-localhost:8080}
-      LISTEN_ADDRESS: :8080
+      LISTEN_ADDRESS: ${LISTEN_ADDRESS:-:8080}
 
       IDP_CLIENT_ID_1: ${IDP_CLIENT_ID_1:?set IDP_CLIENT_ID_1}
       IDP_SECRET_1: ${IDP_SECRET_1:?set IDP_SECRET_1}
