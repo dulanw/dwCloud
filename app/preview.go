@@ -101,10 +101,10 @@ func NewPreviewService(cfg *Config, db *sqlx.DB) (*PreviewService, error) {
 }
 
 func (s *PreviewService) detectPreviewTools() {
-	if path, err := exec.LookPath("vipsthumbnail"); err == nil {
+	if path, err := exec.LookPath("vips"); err == nil {
 		s.vipsPath = path
 	} else {
-		slog.Warn("vipsthumbnail was not found; image previews will not be generated", "error", err)
+		slog.Warn("vips was not found; image previews will not be generated", "error", err)
 	}
 
 	if path, err := exec.LookPath("ffmpeg"); err == nil {
@@ -452,11 +452,17 @@ func (s *PreviewService) sourcePath(row *previewFile) (string, error) {
 
 func (s *PreviewService) generateImageWithVips(ctx context.Context, srcPath, thumbPath string, x, y int, crop bool) error {
 	tmp := thumbPath + ".tmp." + strconv.FormatInt(time.Now().UnixNano(), 36) + ".jpg"
-	args := []string{srcPath, "-s", fmt.Sprintf("%dx%d", x, y)}
+	// Use `vips thumbnail` rather than `vipsthumbnail`: it writes the output to
+	// exactly the filename given. vipsthumbnail's `-o` is a name pattern whose
+	// directory handling is version-dependent, and some builds drop the directory
+	// and write the thumbnail next to the source or in the working directory,
+	// which then makes the publish rename fail with "no such file or directory".
+	args := []string{"thumbnail", srcPath, tmp + "[Q=85]", strconv.Itoa(x), "--height", strconv.Itoa(y)}
 	if crop {
-		args = append(args, "--crop")
+		args = append(args, "--crop", "centre")
+	} else {
+		args = append(args, "--size", "down")
 	}
-	args = append(args, "-o", tmp+"[Q=85]")
 
 	cmd := exec.CommandContext(ctx, s.vipsPath, args...)
 	var stderr bytes.Buffer
