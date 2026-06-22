@@ -378,17 +378,22 @@ func getFileChildCounts(ctx context.Context, db *sqlx.DB, userID uuid.UUID, relC
 	return counts.Folders, counts.Files, nil
 }
 
-// updateAncestorSizes adds delta (can be negative) to all ancestor directories.
-// Call this inside a transaction after inserting/updating/deleting a file.
-// relCanon is the file's path, delta is new_size - old_size.
+// updateAncestorSizes adds delta (can be negative) to all ancestor directories and
+// bumps their version. Call this inside a transaction after inserting/updating/
+// deleting a file. relCanon is the file's path, delta is new_size - old_size.
+//
+// The version bump is what changes each ancestor directory's ETag (see
+// etagFromOCIDVersion); Nextcloud/ownCloud clients only re-descend into a folder
+// whose ETag changed, so every content mutation must touch its ancestors. The
+// version is bumped even when delta == 0 (e.g. a same-size overwrite) so the ETag
+// still changes. For mutations that do not call this (e.g. MKCOL), use
+// bumpAncestorDirVersions instead.
 func updateAncestorSizes(ctx context.Context, tx *sqlx.Tx, userID uuid.UUID, relCanon string, delta int64) ([]types.DbFile, error) {
-	if delta == 0 {
-		return nil, nil
-	}
 	var rows []types.DbFile
 	err := tx.SelectContext(ctx, &rows, `
 		UPDATE files
 		SET size_bytes = size_bytes + $3,
+			version = version + 1,
 			updated_at = NOW()
 		WHERE user_id = $1
 		  AND is_dir = true
@@ -396,6 +401,30 @@ func updateAncestorSizes(ctx context.Context, tx *sqlx.Tx, userID uuid.UUID, rel
 		RETURNING *
 	`, userID, relCanon, delta)
 	return rows, err
+}
+
+// bumpAncestorDirVersions increments the version (and therefore the ETag) of every
+// ancestor directory of relCanon, up to and including the user root ('').
+//
+// Nextcloud/ownCloud sync clients only descend into a folder during sync when that
+// folder's ETag has changed, so any create/delete/move/copy/overwrite must change
+// the ETag of all ancestor directories. Without this, files added by another device
+// are never discovered and downloaded by a client that already synced the parent.
+//
+// Use this only for mutations that do not already call updateAncestorSizes (which
+// performs the same version bump as part of its size update), e.g. MKCOL or an
+// in-place rename where no directory size changes. Call inside the mutation's
+// transaction. relCanon is the affected entry's path.
+func bumpAncestorDirVersions(ctx context.Context, tx *sqlx.Tx, userID uuid.UUID, relCanon string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE files
+		SET version = version + 1,
+			updated_at = NOW()
+		WHERE user_id = $1
+		  AND is_dir = true
+		  AND (path = '' OR (path <> '' AND LEFT($2, length(path) + 1) = path || '/'))
+	`, userID, relCanon)
+	return err
 }
 
 func fileTreeSizeTx(ctx context.Context, tx *sqlx.Tx, userID uuid.UUID, relCanon string) (int64, error) {
@@ -1499,6 +1528,10 @@ func (w *WebDAV) handleDAVMkcol(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
+	if err := bumpAncestorDirVersions(ctx, tx, w.user.ID, relCanon); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
@@ -1616,6 +1649,8 @@ func (w *WebDAV) publishFile(
 		return nil, err
 	}
 
+	// updateAncestorSizes also bumps each ancestor directory's version (ETag) so
+	// sync clients notice the change.
 	_, err = updateAncestorSizes(ctx, tx, w.user.ID, relCanon, delta)
 	if err != nil {
 		restore()
@@ -2018,6 +2053,8 @@ func (w *WebDAV) handleDAVMove(c *echo.Context) error {
 	}
 
 	if srcParentCanon != dstParentCanon {
+		// Different parents: the source and destination ancestor chains both
+		// change size, and updateAncestorSizes also bumps their version/ETag.
 		_, err := updateAncestorSizes(ctx, tx, w.user.ID, relCanon, -movedSize)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -2025,6 +2062,12 @@ func (w *WebDAV) handleDAVMove(c *echo.Context) error {
 
 		_, err = updateAncestorSizes(ctx, tx, w.user.ID, destRelCanon, movedSize)
 		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+	} else {
+		// Same parent (in-place rename): no size change, but the directory listing
+		// changed, so bump the shared ancestor chain's ETag.
+		if err := bumpAncestorDirVersions(ctx, tx, w.user.ID, relCanon); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 		}
 	}
@@ -2133,7 +2176,7 @@ func (w *WebDAV) handleDAVDelete(c *echo.Context) error {
 		}
 	}
 
-	// Update ancestor directory sizes.
+	// Update ancestor directory sizes (also bumps their version/ETag).
 	_, err = updateAncestorSizes(ctx, tx, w.user.ID, relCanon, -totalSize)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -2498,6 +2541,13 @@ func (w *WebDAV) handleDAVCopy(c *echo.Context) error {
 			WHERE user_id = $1 AND path = $2
 			ON CONFLICT (user_id, path, namespace, local_name) DO NOTHING
 		`, w.user.ID, relCanon, destRelCanon); err != nil {
+			_ = os.Remove(destFsAbs)
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+
+		// This branch adds no size, so it skips updateAncestorSizes; bump the
+		// destination ancestors' version/ETag explicitly.
+		if err := bumpAncestorDirVersions(ctx, tx, w.user.ID, destRelCanon); err != nil {
 			_ = os.Remove(destFsAbs)
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 		}

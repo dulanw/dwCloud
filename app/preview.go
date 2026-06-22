@@ -242,18 +242,19 @@ func (s *PreviewService) run(ctx context.Context) {
 				break
 			}
 			err := s.generateQueued(ctx, fileID)
-			if err == nil {
+			switch {
+			case err == nil:
 				s.complete(fileID, false)
-				continue
-			}
-			if errors.Is(err, ErrPreviewNotFound) {
+			case errors.Is(err, ErrPreviewNotFound):
 				s.complete(fileID, true)
-				continue
-			}
-			if err != nil {
+			case ctx.Err() != nil:
+				// Shutting down: leave the file queued so it is retried next start.
+				return
+			default:
+				// Record the failure and drop the file from the queue instead of
+				// retrying it forever (which would spam logs every cycle).
 				s.fail(fileID, err)
 				slog.Warn("failed to generate queued preview", "fileID", fileID, "error", err)
-				break
 			}
 		}
 	}
@@ -322,12 +323,16 @@ func (s *PreviewService) fail(fileID string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	delete(s.queued, fileID)
 	s.status.Failed++
-	s.status.Current = fileID
+	s.status.Current = ""
 	s.status.Queued = len(s.queued)
 	s.status.LastError = err.Error()
-	s.status.Running = false
 	s.status.UpdatedAt = time.Now().UTC()
+	if len(s.queued) == 0 {
+		s.status.Running = false
+	}
+	_ = s.saveQueueLocked()
 }
 
 func (s *PreviewService) loadQueue() error {
@@ -474,6 +479,20 @@ func (s *PreviewService) generateImageWithVips(ctx context.Context, srcPath, thu
 		}
 		return err
 	}
+	return finalizeThumbnail(tmp, thumbPath)
+}
+
+// finalizeThumbnail publishes a freshly generated temp file to thumbPath. If the
+// external tool exited successfully but produced no usable output (for example
+// ffmpeg seeking past the end of a short clip and writing no frame), it reports
+// ErrPreviewNotFound so the file is skipped rather than treated as a hard error
+// and retried forever.
+func finalizeThumbnail(tmp, thumbPath string) error {
+	fi, err := os.Stat(tmp)
+	if err != nil || fi.Size() == 0 {
+		_ = os.Remove(tmp)
+		return ErrPreviewNotFound
+	}
 	return replaceGeneratedFile(tmp, thumbPath)
 }
 
@@ -484,36 +503,42 @@ func (s *PreviewService) generateVideoWithFFmpeg(ctx context.Context, srcPath, t
 		filter = fmt.Sprintf("thumbnail,scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d", x, y, x, y)
 	}
 
-	args := []string{
-		"-hide_banner",
-		"-loglevel", "error",
-		"-y",
-		"-ss", "10",
-		"-i", srcPath,
-		"-vf", filter,
-		"-frames:v", "1",
-		"-q:v", "3",
-		tmp,
+	// Seeking 10s in skips intros, but on clips shorter than that ffmpeg can exit
+	// 0 without writing any frame. Try with the seek first, then fall back to no
+	// seek; only if neither produces a frame do we skip the file.
+	attempts := [][]string{
+		{"-hide_banner", "-loglevel", "error", "-y", "-ss", "10", "-i", srcPath, "-vf", filter, "-frames:v", "1", "-q:v", "3", tmp},
+		{"-hide_banner", "-loglevel", "error", "-y", "-i", srcPath, "-vf", filter, "-frames:v", "1", "-q:v", "3", tmp},
 	}
 
-	if err := s.runFFmpeg(ctx, args, tmp); err == nil {
-		return replaceGeneratedFile(tmp, thumbPath)
+	var lastErr error
+	for _, args := range attempts {
+		if err := s.runFFmpeg(ctx, args, tmp); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
+			// Real ffmpeg failure (corrupt/unsupported input, etc.). Remember it
+			// so we can report a genuine failure rather than a silent skip.
+			lastErr = err
+			continue
+		}
+		err := finalizeThumbnail(tmp, thumbPath)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, ErrPreviewNotFound) {
+			return err
+		}
+		// ffmpeg exited 0 but wrote no frame; try the next strategy.
 	}
 
-	args = []string{
-		"-hide_banner",
-		"-loglevel", "error",
-		"-y",
-		"-i", srcPath,
-		"-vf", filter,
-		"-frames:v", "1",
-		"-q:v", "3",
-		tmp,
+	// If any attempt produced a real ffmpeg error, surface it so it is recorded
+	// and logged as a failure. Only when every attempt ran cleanly without
+	// yielding a frame do we treat it as a legitimate skip.
+	if lastErr != nil {
+		return lastErr
 	}
-	if err := s.runFFmpeg(ctx, args, tmp); err != nil {
-		return err
-	}
-	return replaceGeneratedFile(tmp, thumbPath)
+	return ErrPreviewNotFound
 }
 
 func replaceGeneratedFile(tmp string, dst string) error {
