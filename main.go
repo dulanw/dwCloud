@@ -190,6 +190,18 @@ func main() {
 		OnShutdownError: func(err error) {
 			slog.Error("failed to shut down server gracefully", "error", err)
 		},
+		// echo's defaults (ReadTimeout/WriteTimeout = 30s) abort any file transfer
+		// that takes longer than 30s, which breaks large uploads and downloads.
+		// A file server cannot bound whole-request read/write time, so disable those
+		// and instead guard against slow-header (Slowloris) attacks with
+		// ReadHeaderTimeout, plus a keep-alive IdleTimeout.
+		BeforeServeFunc: func(s *http.Server) error {
+			s.ReadTimeout = 0
+			s.WriteTimeout = 0
+			s.ReadHeaderTimeout = 30 * time.Second
+			s.IdleTimeout = 120 * time.Second
+			return nil
+		},
 	}
 	if err := sc.Start(ctx, e); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		e.Logger.Error("failed to start server", "error", err)
